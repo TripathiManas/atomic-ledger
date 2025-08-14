@@ -11,232 +11,139 @@ import (
 	"os/exec"
 	"time"
 
-	// This is the PostgreSQL driver for Go's database/sql package.
-	// The blank identifier _ is used because we only need the driver's side effects (its registration).
 	_ "github.com/lib/pq"
 )
 
-// db is a global variable to hold the database connection pool.
 var db *sql.DB
 
-// Account represents the structure of our 'accounts' table.
-// The `json:"..."` tags are used to control how the struct is encoded into JSON.
+// --- FINAL CORRECTED Data Structures ---
 type Account struct {
-	ID      int     `json:"id"`
+	ID      string  `json:"id"` // ID is now a string
 	Balance float64 `json:"balance"`
 }
 
-// Transaction represents the structure of our 'transactions' table.
 type Transaction struct {
-	ID        int       `json:"id"`
-	FromID    int       `json:"from_id"`
-	ToID      int       `json:"to_id"`
+	ID        string    `json:"id"` // ID is now a string
+	FromID    string    `json:"from_id"`
+	ToID      string    `json:"to_id"`
 	Amount    float64   `json:"amount"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// TransferRequest is used to decode the JSON body of a transfer request.
 type TransferRequest struct {
-	FromID int     `json:"from_id"`
-	ToID   int     `json:"to_id"`
+	FromID string  `json:"from_id"` // ID is now a string
+	ToID   string  `json:"to_id"`
 	Amount float64 `json:"amount"`
+}
+
+func respondWithError(w http.ResponseWriter, code int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
 
 func main() {
 	var err error
-	// The connection string points to our CockroachDB cluster.
-	// We connect to roach-1, but the driver is smart enough to handle cluster operations.
-	// New line
-	connStr := "postgresql://root@127.0.0.1:26257/atomic_ledger?sslmode=disable"
+	connStr := "postgresql://root@roach-1:26257/atomic_ledger?sslmode=disable"
 	db, err = sql.Open("postgres", connStr)
-	if err != nil {
-		log.Fatal("FATAL: failed to connect to database", err)
-	}
-	defer db.Close() // Ensure the database connection is closed when main exits.
-
-	// ... after defer db.Close()
-
-log.Println("Attempting to ping the database...") // <-- ADD THIS LINE
-
-// Ping the database to verify the connection is alive.
-if err = db.Ping(); err != nil {
-    log.Fatal("FATAL: could not ping database", err)
-}
-
-log.Println("Successfully connected to CockroachDB cluster.")
-
-// ... rest of the code
-
-	// Ping the database to verify the connection is alive.
-	if err = db.Ping(); err != nil {
-		log.Fatal("FATAL: could not ping database", err)
-	}
+	if err != nil { log.Fatal("FATAL: failed to connect to database", err) }
+	defer db.Close()
+	if err = db.Ping(); err != nil { log.Fatal("FATAL: could not ping database", err) }
 	log.Println("Successfully connected to CockroachDB cluster.")
 
-	// --- API Route Handlers ---
-	// We define which function handles which API endpoint.
-	http.HandleFunc("/api/accounts", accountsHandler)
-	http.HandleFunc("/api/transactions", transactionsHandler)
-	http.HandleFunc("/api/transfers", transferHandler)
-	http.HandleFunc("/api/chaos", chaosHandler)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/accounts", accountsHandler)
+	mux.HandleFunc("/api/transactions", transactionsHandler)
+	mux.HandleFunc("/api/transfers", transferHandler)
+	mux.HandleFunc("/api/chaos", chaosHandler)
+	mux.HandleFunc("/", serveFrontend)
 
-	// Start the HTTP server on port 8081.
-	log.Println("Starting AtomicLedger API server on http://localhost:8081")
-	if err := http.ListenAndServe(":8081", nil); err != nil {
+	handler := corsMiddleware(mux)
+
+	log.Println("Starting AtomicLedger server on http://localhost:8081")
+	if err := http.ListenAndServe(":8081", handler); err != nil {
 		log.Fatal("FATAL: ListenAndServe failed", err)
 	}
 }
 
-// accountsHandler handles requests for creating and fetching accounts.
+func serveFrontend(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "index.html")
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == "OPTIONS" { w.WriteHeader(http.StatusOK); return }
+		next.ServeHTTP(w, r)
+	})
+}
+
 func accountsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method == http.MethodGet {
-		// Fetch all accounts
 		rows, err := db.Query("SELECT id, balance FROM accounts ORDER BY id")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		if err != nil { respondWithError(w, http.StatusInternalServerError, err.Error()); return }
 		defer rows.Close()
-
-		accounts := []Account{}
+		var accounts []Account
 		for rows.Next() {
 			var acc Account
-			if err := rows.Scan(&acc.ID, &acc.Balance); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
+			if err := rows.Scan(&acc.ID, &acc.Balance); err != nil { respondWithError(w, http.StatusInternalServerError, err.Error()); return }
 			accounts = append(accounts, acc)
 		}
 		json.NewEncoder(w).Encode(accounts)
-
 	} else if r.Method == http.MethodPost {
-		// Create a new account with a default balance of 1000.
 		var newAccount Account
-		err := db.QueryRow(
-			"INSERT INTO accounts (balance) VALUES (1000) RETURNING id, balance",
-		).Scan(&newAccount.ID, &newAccount.Balance)
-
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		err := db.QueryRow("INSERT INTO accounts (balance) VALUES (1000) RETURNING id, balance").Scan(&newAccount.ID, &newAccount.Balance)
+		if err != nil { respondWithError(w, http.StatusInternalServerError, err.Error()); return }
 		w.WriteHeader(http.StatusCreated)
 		json.NewEncoder(w).Encode(newAccount)
 	}
 }
-
-// transactionsHandler fetches the list of all past transactions.
 func transactionsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	rows, err := db.Query("SELECT id, from_id, to_id, amount, created_at FROM transactions ORDER BY created_at DESC LIMIT 20")
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	if err != nil { respondWithError(w, http.StatusInternalServerError, err.Error()); return }
 	defer rows.Close()
-
-	transactions := []Transaction{}
+	var transactions []Transaction
 	for rows.Next() {
 		var t Transaction
-		if err := rows.Scan(&t.ID, &t.FromID, &t.ToID, &t.Amount, &t.CreatedAt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+		if err := rows.Scan(&t.ID, &t.FromID, &t.ToID, &t.Amount, &t.CreatedAt); err != nil { respondWithError(w, http.StatusInternalServerError, err.Error()); return }
 		transactions = append(transactions, t)
 	}
 	json.NewEncoder(w).Encode(transactions)
 }
-
-// transferHandler is the most critical function. It performs the fund transfer inside a database transaction.
 func transferHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
-		http.Error(w, "Only POST method is allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
 	var req TransferRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { respondWithError(w, http.StatusBadRequest, "Invalid request body"); return }
 
-	// --- BEGIN DATABASE TRANSACTION ---
-	// A transaction ensures that all commands within it either succeed together or fail together (atomicity).
+    log.Printf("Received transfer request: FromID=%s, ToID=%s, Amount=%.2f", req.FromID, req.ToID, req.Amount)
+
 	tx, err := db.BeginTx(context.Background(), nil)
-	if err != nil {
-		http.Error(w, "Failed to begin transaction", http.StatusInternalServerError)
-		return
-	}
-	// Defer a rollback. If the transaction succeeds, tx.Commit() is called first, and this becomes a no-op.
-	// If any step fails, the function will exit, and this rollback will execute, undoing any changes.
+	if err != nil { respondWithError(w, http.StatusInternalServerError, "Failed to begin transaction"); return }
 	defer tx.Rollback()
-
-	// Step 1: Check the sender's balance for sufficient funds.
 	var senderBalance float64
+	// The database can handle comparing a string ID to the integer column
 	err = tx.QueryRow("SELECT balance FROM accounts WHERE id = $1", req.FromID).Scan(&senderBalance)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			http.Error(w, `{"error": "Sender account not found"}`, http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		if err == sql.ErrNoRows { respondWithError(w, http.StatusNotFound, "Sender account not found"); return }
+		respondWithError(w, http.StatusInternalServerError, err.Error()); return
 	}
-
-	if senderBalance < req.Amount {
-		http.Error(w, `{"error": "Insufficient funds"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Step 2: Debit the amount from the sender's account.
+	if senderBalance < req.Amount { respondWithError(w, http.StatusBadRequest, "Insufficient funds"); return }
 	_, err = tx.Exec("UPDATE accounts SET balance = balance - $1 WHERE id = $2", req.Amount, req.FromID)
-	if err != nil {
-		http.Error(w, "Failed to debit sender", http.StatusInternalServerError)
-		return
-	}
-
-	// Step 3: Credit the amount to the receiver's account.
+	if err != nil { respondWithError(w, http.StatusInternalServerError, "Failed to debit sender"); return }
 	_, err = tx.Exec("UPDATE accounts SET balance = balance + $1 WHERE id = $2", req.Amount, req.ToID)
-	if err != nil {
-		http.Error(w, "Failed to credit receiver", http.StatusInternalServerError)
-		return
-	}
-
-	// Step 4: Record the transaction in the transactions log.
+	if err != nil { respondWithError(w, http.StatusInternalServerError, "Failed to credit receiver"); return }
 	_, err = tx.Exec("INSERT INTO transactions (from_id, to_id, amount) VALUES ($1, $2, $3)", req.FromID, req.ToID, req.Amount)
-	if err != nil {
-		http.Error(w, "Failed to log transaction", http.StatusInternalServerError)
-		return
-	}
-
-	// --- COMMIT TRANSACTION ---
-	// If all steps have succeeded without error, commit the transaction to make the changes permanent.
-	if err := tx.Commit(); err != nil {
-		http.Error(w, "Failed to commit transaction", http.StatusInternalServerError)
-		return
-	}
-
-	w.WriteHeader(http.StatusOK)
+	if err != nil { respondWithError(w, http.StatusInternalServerError, "Failed to log transaction"); return }
+	if err := tx.Commit(); err != nil { respondWithError(w, http.StatusInternalServerError, "Failed to commit transaction"); return }
 	json.NewEncoder(w).Encode(map[string]string{"message": "Transfer successful!"})
 }
-
-// chaosHandler simulates a node failure by stopping one of the Docker containers.
 func chaosHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	// The container name is usually <projectname>-<service>-<number>.
-	// You can verify this by running `docker ps`.
 	containerName := "atomic-ledger-roach-3-1"
-	log.Printf("Executing chaos: stopping container %s", containerName)
-
 	cmd := exec.Command("docker", "stop", containerName)
-	if err := cmd.Run(); err != nil {
-		log.Printf("ERROR: failed to execute docker stop: %v", err)
-		http.Error(w, "Failed to stop node", http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("Chaos executed successfully: container %s stopped.", containerName)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Successfully stopped node roach-3. The cluster should remain available."})
+	if err := cmd.Run(); err != nil { respondWithError(w, http.StatusInternalServerError, "Failed to stop node"); return }
+	json.NewEncoder(w).Encode(map[string]string{"message": "Successfully stopped node roach-3."})
 }

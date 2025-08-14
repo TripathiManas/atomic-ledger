@@ -1,5 +1,17 @@
-version: '3.8'
 services:
+  api:
+    build: .
+    ports:
+      - "8081:8081"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Simple dependency: just wait for the DB containers to be created.
+    depends_on:
+      - roach-1
+      - roach-2
+      - roach-3
+      - roach-init
+
   roach-1:
     image: cockroachdb/cockroach:v23.1.10
     command: start --insecure --join=roach-1,roach-2,roach-3 --listen-addr=roach-1:26257 --http-addr=roach-1:8080
@@ -23,24 +35,26 @@ services:
 
   roach-init:
     image: cockroachdb/cockroach:v23.1.10
-    command: >
-      /bin/sh -c "
-      sleep 10;
-      /cockroach/cockroach sql --insecure --host=roach-1 -e '
-        CREATE DATABASE IF NOT EXISTS atomic_ledger;
-        USE atomic_ledger;
-        CREATE TABLE IF NOT EXISTS accounts (
-            id SERIAL PRIMARY KEY,
-            balance DECIMAL(15, 2) NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS transactions (
-            id SERIAL PRIMARY KEY,
-            from_id INT NOT NULL,
-            to_id INT NOT NULL,
-            amount DECIMAL(15, 2) NOT NULL,
-            created_at TIMESTAMPTZ DEFAULT now()
-        );
-      '"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        sleep 10;
+        /cockroach/cockroach init --insecure --host=roach-1 || true;
+        /cockroach/cockroach sql --insecure --host=roach-1 -e '
+          CREATE DATABASE IF NOT EXISTS atomic_ledger;
+          USE atomic_ledger;
+          CREATE TABLE IF NOT EXISTS accounts (
+              id SERIAL PRIMARY KEY,
+              balance DECIMAL(15, 2) NOT NULL
+          );
+          CREATE TABLE IF NOT EXISTS transactions (
+              id SERIAL PRIMARY KEY,
+              from_id INT NOT NULL,
+              to_id INT NOT NULL,
+              amount DECIMAL(15, 2) NOT NULL,
+              created_at TIMESTAMPTZ DEFAULT now()
+          );
+        '
     depends_on:
       - roach-1
       - roach-2
