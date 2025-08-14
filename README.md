@@ -32,7 +32,7 @@ The project follows a classic three-tier architecture, ensuring a clean separati
 
 1.  **Clone the repository:**
     ```bash
-    git clone [https://github.com/YOUR_USERNAME/atomic-ledger.git](https://github.com/YOUR_USERNAME/atomic-ledger.git)
+    git clone [https://github.com/TripathiManas/atomic-ledger.git](https://github.com/TripathiManas/atomic-ledger.git)
     cd atomic-ledger
     ```
 
