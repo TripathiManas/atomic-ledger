@@ -1,0 +1,52 @@
+version: '3.8'
+services:
+  roach-1:
+    image: cockroachdb/cockroach:v23.1.10
+    command: start --insecure --join=roach-1,roach-2,roach-3 --listen-addr=roach-1:26257 --http-addr=roach-1:8080
+    ports:
+      - "26257:26257"
+      - "8080:8080"
+    volumes:
+      - roach-data-1:/cockroach/cockroach-data
+
+  roach-2:
+    image: cockroachdb/cockroach:v23.1.10
+    command: start --insecure --join=roach-1,roach-2,roach-3 --listen-addr=roach-2:26257
+    volumes:
+      - roach-data-2:/cockroach/cockroach-data
+
+  roach-3:
+    image: cockroachdb/cockroach:v23.1.10
+    command: start --insecure --join=roach-1,roach-2,roach-3 --listen-addr=roach-3:26257
+    volumes:
+      - roach-data-3:/cockroach/cockroach-data
+
+  roach-init:
+    image: cockroachdb/cockroach:v23.1.10
+    command: >
+      /bin/sh -c "
+      sleep 10;
+      /cockroach/cockroach sql --insecure --host=roach-1 -e '
+        CREATE DATABASE IF NOT EXISTS atomic_ledger;
+        USE atomic_ledger;
+        CREATE TABLE IF NOT EXISTS accounts (
+            id SERIAL PRIMARY KEY,
+            balance DECIMAL(15, 2) NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS transactions (
+            id SERIAL PRIMARY KEY,
+            from_id INT NOT NULL,
+            to_id INT NOT NULL,
+            amount DECIMAL(15, 2) NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT now()
+        );
+      '"
+    depends_on:
+      - roach-1
+      - roach-2
+      - roach-3
+
+volumes:
+  roach-data-1:
+  roach-data-2:
+  roach-data-3:
