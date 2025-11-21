@@ -1,4 +1,4 @@
-# 🏦 AtomicLedger: A Fault-Tolerant Financial Transaction System
+#  AtomicLedger: A Fault-Tolerant Financial Transaction System
 
 **AtomicLedger** is a full-stack web application that simulates a minimalist banking ledger, allowing for the creation of accounts and the atomic transfer of funds between them. This project was specifically designed to demonstrate the core strengths of a distributed SQL database, focusing on data consistency, high availability, and resilience.
 
